@@ -1,0 +1,27 @@
+# Dependencies and build output
+node_modules/
+lib/
+dist/
+coverage/
+*.tgz
+
+# TypeScript
+*.tsbuildinfo
+
+# Local reference material (downloaded official/third-party sources)
+.research/
+
+# Local smoke-test environments and artifacts (Edge profiles, screenshots,
+# policy-persistence evidence, disposable session data)
+smoke-home/
+smoke-artifacts/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log*
+*.log

@@ -1,0 +1,12 @@
+# dsh-skill-manager bundle layer.
+#
+# This patch is applied by the `dsh` profile boot after the base and web-app
+# bundle layers. It inserts one host row named after the package; the browser
+# roster entry comes from the `dsh.client` block in package.json, and the
+# client-modules node half serves its built bundle at /plugins/<id>/client.js.
+#
+# The row `name` MUST equal the package name: the browser module table is
+# keyed by package name, and the built lib/client.js stamps the same id.
+- insert:
+    - id: skill-manager
+      name: 'dsh-skill-manager'

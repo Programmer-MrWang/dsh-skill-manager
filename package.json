@@ -1,0 +1,116 @@
+{
+  "name": "dsh-skill-manager",
+  "version": "0.1.0",
+  "description": "Skill Manager for DeepSeek Harness Web: browse, author, import, recover, and govern agent skills from Settings, with layered invocation policy enforced across the model catalog, the skill tool, /name, and the Web slash menu",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "plugin",
+    "skills",
+    "agent-skills",
+    "settings",
+    "policy"
+  ],
+  "license": "MIT",
+  "author": "Programmer-MrWang",
+  "homepage": "https://github.com/Programmer-MrWang/dsh-skill-manager#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Programmer-MrWang/dsh-skill-manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Programmer-MrWang/dsh-skill-manager/issues"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsdown -c tsdown.config.ts",
+    "watch": "tsdown -c tsdown.config.ts --watch",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "prepare": "npm run build",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-home-paths": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-scope": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-typert-protocol": "^0.1.2-alpha.5",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "yaml": "^2.6.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-settings": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-skill": "^0.1.2-alpha.5",
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-agent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-skill": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-api-remotes": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-client-locale": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-client-ui-settings": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-settings": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-skill": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-typert-registry": "^0.1.2-alpha.5",
+    "@types/node": "^22.10.0",
+    "@types/react": "~18.3.1",
+    "react": "^18.2.0",
+    "tsdown": "^0.22.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
