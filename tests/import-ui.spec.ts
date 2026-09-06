@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { en } from '../src/client/locales.ts'
-import { SkillManagerSection } from '../src/client/index.ts'
+import { SkillManagerSection, unwrapPickedPath } from '../src/client/index.ts'
 import type { SkillManagerSnapshot } from '../src/wire.ts'
 
 const fixture = (): SkillManagerSnapshot => ({
@@ -76,6 +76,8 @@ describe('folder import flow', () => {
   }
 
   it('stays visible after picking a folder and renders the staged row', async () => {
+    // The apply wrapper already unwrapped the transport envelope; the section
+    // receives a plain path string.
     renderSection({ pickFolder: async () => 'E:\\桌面\\skills\\skill-alpha' })
     await flush(60)
 
@@ -108,5 +110,20 @@ describe('folder import flow', () => {
     expect(text).toContain('alpha')
     expect(text).not.toContain(en.renderError)
     expect(container.querySelectorAll('.sm-panel').length).toBeGreaterThan(0)
+  })
+})
+
+describe('unwrapPickedPath', () => {
+  it('accepts the transport envelope, raw strings, and cancellation', () => {
+    expect(unwrapPickedPath({ ok: true, value: 'C:\\skills\\alpha' })).toBe('C:\\skills\\alpha')
+    expect(unwrapPickedPath({ ok: true, value: '' })).toBe(null)
+    expect(unwrapPickedPath('C:\\skills\\alpha')).toBe('C:\\skills\\alpha')
+    expect(unwrapPickedPath(null)).toBe(null)
+    expect(unwrapPickedPath({ ok: true, value: { path: 'x' } })).toBe(null)
+  })
+
+  it('throws with the remote message on failure', () => {
+    expect(() => unwrapPickedPath({ ok: false, error: { message: 'chooser failed' } })).toThrow('chooser failed')
+    expect(() => unwrapPickedPath({ ok: false, error: {} })).toThrow('folder picker failed')
   })
 })

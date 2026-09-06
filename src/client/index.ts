@@ -293,7 +293,7 @@ export function apply(ctx: {
   const pickFolder = async (): Promise<string | null> => {
     const picker = (ctx as unknown as { get: (key: string) => unknown }).get('remote.directoryPicker') as FolderPicker | undefined
     if (picker?.pick === undefined) throw new Error('This deployment has no native folder picker.')
-    return await picker.pick()
+    return await unwrapPickedPath(await picker.pick())
   }
 
   ctx.slots.inject('settings.section', () =>
@@ -1198,6 +1198,24 @@ function importStatusKey(status: SkillImportResult['items'][number]['status']): 
 function folderBaseName(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+/**
+ * Normalize the native folder picker answer. Mounted namespace methods return
+ * the transport envelope (`{ ok, value }`), and older deployments may return
+ * the raw path; both are accepted, and non-string values degrade to null.
+ */
+export function unwrapPickedPath(result: unknown): string | null {
+  if (typeof result === 'string') return result === '' ? null : result
+  if (result === null || result === undefined) return null
+  const envelope = result as { ok?: unknown; value?: unknown; error?: { message?: string } }
+  if (envelope.ok === true) {
+    return typeof envelope.value === 'string' && envelope.value !== '' ? envelope.value : null
+  }
+  if (envelope.ok === false) {
+    throw new Error(envelope.error?.message ?? 'The folder picker failed.')
+  }
+  return null
 }
 
 /** Translate a scope kind for option labels. */
