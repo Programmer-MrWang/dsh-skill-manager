@@ -299,7 +299,10 @@ export function apply(ctx: {
   ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
       { name: 'settings.section', id: 'skills', order: 30, label: () => t('nav'), locale: NS },
-      (props: SkillManagerSectionProps) => h(Section, { ...props, t, api, pickFolder }),
+      (props: SkillManagerSectionProps) => h(SkillSectionBoundary, {
+        message: t('renderError'),
+        children: h(Section, { ...props, t, api, pickFolder }),
+      }),
     ))
 }
 
@@ -1143,7 +1146,7 @@ function Section(props: {
     importDialog,
     body(),
   )
-  return h(SkillSectionBoundary, { message: t('renderError'), children: sectionTree })
+  return sectionTree
 }
 
 /** Render error boundary for the section: blank pages become readable errors. */
@@ -1161,6 +1164,11 @@ class SkillSectionBoundary extends Component<SkillSectionBoundaryProps, { error:
 
   componentDidCatch(error: unknown): void {
     console.error('[dsh-skill-manager] section render failed', error)
+    try {
+      ;(globalThis as { __skillManagerLastError?: unknown }).__skillManagerLastError = error
+    } catch {
+      // Some sandboxes freeze globals; the visible boundary message still applies.
+    }
   }
 
   render(): ReactNode {
