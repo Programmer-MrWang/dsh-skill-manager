@@ -8,7 +8,7 @@
  * @module dsh-skill-manager/client
  */
 
-import { createElement as h, useEffect, useMemo, useState } from 'react'
+import { Component, createElement as h, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { en, zh, type SkillManagerLocaleKey } from './locales.js'
 import { STYLE_CSS, STYLE_TAG } from './styles.js'
@@ -1107,10 +1107,14 @@ function Section(props: {
         const outcome = importResult?.items.find(item => item.index === index)
         const badge = outcome === undefined ? null
           : h('span', { className: importBadgeClass(outcome.status) }, t(importStatusKey(outcome.status)))
+        const importedName = outcome !== undefined && outcome.name !== undefined && outcome.name !== folderBaseName(path)
+          ? h('span', { className: 'sm-badge sm-badge-mute' }, `→ ${outcome.name}`)
+          : null
         return h('div', { key: `${index}-${path}`, className: 'sm-layer-row' },
           h('span', { className: 'sm-key', style: { flex: '1 1 240px' } }, folderBaseName(path)),
           h('span', { className: 'sm-badge sm-badge-mute', style: { wordBreak: 'break-all' } }, path),
           badge,
+          importedName,
           h('button', { type: 'button', className: 'sm-button', disabled: saving,
             onClick: () => { dropStaged(index) } }, t('importRemove')),
         )
@@ -1126,7 +1130,7 @@ function Section(props: {
     ),
   )
 
-  return h('div', { className: 'sm' },
+  const sectionTree = h('div', { className: 'sm' },
     h('p', { className: 'sm-hint' }, t('intro')),
     h('div', { className: 'sm-toolbar' },
       h('div', { className: 'sm-tabs', role: 'tablist' }, ...tabs),
@@ -1139,6 +1143,32 @@ function Section(props: {
     importDialog,
     body(),
   )
+  return h(SkillSectionBoundary, { message: t('renderError'), children: sectionTree })
+}
+
+/** Render error boundary for the section: blank pages become readable errors. */
+interface SkillSectionBoundaryProps {
+  readonly children: ReactNode
+  readonly message: string
+}
+
+class SkillSectionBoundary extends Component<SkillSectionBoundaryProps, { error: Error | null }> {
+  state = { error: null as Error | null }
+
+  static getDerivedStateFromError(error: unknown): { error: Error } {
+    return { error: error instanceof Error ? error : new Error(String(error)) }
+  }
+
+  componentDidCatch(error: unknown): void {
+    console.error('[dsh-skill-manager] section render failed', error)
+  }
+
+  render(): ReactNode {
+    if (this.state.error === null) return this.props.children
+    const error = this.state.error
+    return h('p', { className: 'sm-status sm-status-err', role: 'alert' },
+      `${this.props.message} ${error.message} — ${error.stack?.split('\n')[1]?.trim() ?? ''}`)
+  }
 }
 
 /** Status badge tone of one import outcome. */
@@ -1171,4 +1201,5 @@ function scopeLabel(scope: PolicyScopeOption['scope'], t: (key: SkillManagerLoca
 
 /* Keep type-level exports small and stable for consumers/tests. */
 export type { DraftResult, ValidateResult, PolicyWriteResult, LayerTarget, EditorState }
+export { Section as SkillManagerSection }
 export { parseDraftResult, parseValidateResult, parsePolicyWrite, parseOk }

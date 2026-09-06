@@ -34,6 +34,7 @@ export type SkillManagerLocaleKey =
   | 'importFolders' | 'importTitle' | 'importIntro' | 'importEmpty' | 'importPick'
   | 'importRemove' | 'importConfirm' | 'importSummary' | 'noticeImported'
   | 'importStatusImported' | 'importStatusConflict' | 'importStatusInvalid' | 'importStatusError'
+  | 'renderError'
 
 /** English dictionary. */
 export const en: Record<SkillManagerLocaleKey, string> = {
@@ -173,6 +174,7 @@ export const en: Record<SkillManagerLocaleKey, string> = {
   importStatusConflict: 'Name conflict',
   importStatusInvalid: 'Invalid',
   importStatusError: 'Failed',
+  renderError: 'The Skills page failed to render:'
 }
 
 /** Simplified Chinese dictionary. */
@@ -313,4 +315,5 @@ export const zh: Record<SkillManagerLocaleKey, string> = {
   importStatusConflict: '名称冲突',
   importStatusInvalid: '无效',
   importStatusError: '失败',
+  renderError: 'Skills 页面渲染出错：'
 }
