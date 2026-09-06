@@ -80,6 +80,24 @@ export interface TrashedSkillView {
   deletedAt: string
 }
 
+/** Per-folder outcome of a folder-import request. */
+export type SkillImportStatus = 'imported' | 'conflict' | 'invalid' | 'error'
+
+export interface SkillImportItemView {
+  /** Position of the source folder inside the import request. */
+  index: number
+  /** Imported skill name (bundle: SKILL.md frontmatter name; flat: file base name). */
+  name?: string
+  status: SkillImportStatus
+  diagnostics?: readonly SkillDiagnosticView[]
+}
+
+/** Result of one `importFromDirectories` call: items are positional and total. */
+export interface SkillImportResult {
+  items: readonly SkillImportItemView[]
+  imported: number
+}
+
 export interface SkillAuthoringOptions {
   dshHome: string
   agentsHome: string
@@ -147,6 +165,8 @@ const TRASH_METADATA = 'entry.yaml'
 const TRASH_PAYLOAD = 'payload'
 const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const RESERVED_WINDOWS_NAMES = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+const IMPORT_MAX_FOLDERS = 64
+const IMPORT_MAX_TOTAL_BYTES = 64 * 1024 * 1024
 
 /**
  * Manages the four writable skill roots without accepting arbitrary paths from callers.
@@ -425,6 +445,92 @@ export class SkillAuthoringService {
       }
     }
     return views
+  }
+
+  /**
+   * Import folders picked by the operator into one managed root. Every folder
+   * must contain a single skill: a `SKILL.md` bundle or exactly one flat
+   * Markdown file. Folders are validated first (no partial import on invalid
+   * items), existing names are reported as conflicts and skipped, and a copy
+   * failure rolls the whole batch back.
+   * @param paths - absolute source directories (from the native folder picker).
+   * @param rootId - managed destination root.
+   * @returns one outcome per input path, positional.
+   */
+  async importFromDirectories(paths: readonly string[], rootId: string): Promise<SkillImportResult> {
+    if (paths.length === 0) throw new SkillAuthoringError('INVALID_INPUT', 'No folders were selected for import.')
+    if (paths.length > IMPORT_MAX_FOLDERS) {
+      throw new SkillAuthoringError('INVALID_INPUT', `No more than ${String(IMPORT_MAX_FOLDERS)} folders can be imported at once.`)
+    }
+    for (const path of paths) {
+      if (!isAbsolute(path)) throw new SkillAuthoringError('INVALID_INPUT', 'Import paths must be absolute.')
+    }
+    return await this.exclusive(async () => {
+      const root = this.requireRoot(rootId)
+      if (!(await rootState(root.path)).writable) {
+        throw new SkillAuthoringError('READ_ONLY', 'The selected skill root is not writable.')
+      }
+      await ensureRoot(root.path)
+      const rootCanonical = await realpath(root.path)
+
+      const outcomes: SkillImportItemView[] = []
+      const pending: Array<{ index: number; name: string; kind: SkillLayout; sourceDir: string; skillFile: string }> = []
+      const seenNames = new Set<string>()
+      for (let index = 0; index < paths.length; index += 1) {
+        const path = paths[index] ?? ''
+        const inspected = await inspectImportFolder(path, this.maxFileBytes, this.maxNameLength)
+        if (inspected.diagnostics.length > 0) {
+          outcomes.push({ index, status: 'invalid', diagnostics: inspected.diagnostics })
+          continue
+        }
+        const name = inspected.name
+        if (seenNames.has(name)) {
+          outcomes.push({ index, status: 'conflict', name, diagnostics: [{ code: 'DUPLICATE_IN_SELECTION', message: 'Selected more than once.' }] })
+          continue
+        }
+        seenNames.add(name)
+        const entryName = inspected.kind === 'bundle' ? name : `${name}.md`
+        if (await existsAny(join(root.path, entryName))) {
+          outcomes.push({ index, status: 'conflict', name, diagnostics: [{ code: 'NAME_EXISTS', message: 'A skill with this name already exists in the target root.' }] })
+          continue
+        }
+        pending.push({ index, name, kind: inspected.kind, sourceDir: path, skillFile: inspected.skillFile })
+      }
+
+      const created: string[] = []
+      for (const item of pending) {
+        const temporary = join(root.path, `.import-${randomUUID()}`)
+        const target = join(root.path, item.kind === 'bundle' ? item.name : `${item.name}.md`)
+        try {
+          const total = await copyImportTree(item, temporary, this.maxFileBytes)
+          if (total > IMPORT_MAX_TOTAL_BYTES) {
+            throw new SkillAuthoringError('TOO_LARGE', `Imported skill content exceeds ${String(Math.round(IMPORT_MAX_TOTAL_BYTES / 1024 / 1024))} MB.`)
+          }
+          await assertCanonicalPath(rootCanonical, temporary)
+          await rename(temporary, target)
+          created.push(target)
+          outcomes.push({ index: item.index, name: item.name, status: 'imported' })
+        } catch (error) {
+          await rm(temporary, { recursive: true, force: true })
+          // Roll the whole batch back: an import is all-or-nothing.
+          for (const createdPath of created.reverse()) {
+            await rm(createdPath, { recursive: true, force: true }).catch(() => {})
+          }
+          created.length = 0
+          const pendingIndexes = new Set(pending.map(item => item.index))
+          const kept = outcomes.filter(item => !pendingIndexes.has(item.index))
+          const failed = pending.map(item => ({
+            index: item.index,
+            status: 'error' as const,
+            diagnostics: [{ code: 'IMPORT_FAILED', message: safeError(error) }],
+          }))
+          outcomes.length = 0
+          outcomes.push(...kept, ...failed)
+          break
+        }
+      }
+      return { items: outcomes, imported: outcomes.filter(item => item.status === 'imported').length }
+    })
   }
 
   private async scanRoot(root: RootRecord): Promise<CandidateRecord[]> {
@@ -846,6 +952,141 @@ function assertLayout(layout: string): asserts layout is SkillLayout {
 function positiveInteger(value: number, field: string): number {
   if (!Number.isSafeInteger(value) || value < 1) throw new TypeError(`${field} must be a positive integer.`)
   return value
+}
+
+/** Preflight one import folder: layout detection and skill-name validation. */
+async function inspectImportFolder(
+  sourceDir: string,
+  maxBytes: number,
+  maxNameLength: number,
+): Promise<{ name: string; kind: SkillLayout; skillFile: string; diagnostics: SkillDiagnosticView[] }> {
+  const diagnostics: SkillDiagnosticView[] = []
+  const fail = (code: string, message: string): { name: string; kind: SkillLayout; skillFile: string; diagnostics: SkillDiagnosticView[] } => ({
+    name: '',
+    kind: 'flat',
+    skillFile: sourceDir,
+    diagnostics: [{ code, message }],
+  })
+  let info
+  try {
+    info = await lstat(sourceDir)
+  } catch {
+    return fail('NOT_READABLE', 'The selected folder cannot be read.')
+  }
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    return fail('NOT_A_DIRECTORY', 'The selected path is not a real folder.')
+  }
+  let entries
+  try {
+    entries = await readdir(sourceDir, { withFileTypes: true })
+  } catch {
+    return fail('NOT_READABLE', 'The selected folder cannot be read.')
+  }
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  const hasSkillMd = entries.some(entry =>
+    entry.name === 'SKILL.md' && entry.isFile() && !entry.isSymbolicLink())
+  const markdownFiles = entries.filter(entry =>
+    entry.isFile() && !entry.isSymbolicLink() && entry.name.endsWith('.md') && !entry.name.startsWith('.'))
+
+  let skillFile: string
+  let kind: SkillLayout
+  if (hasSkillMd) {
+    skillFile = join(sourceDir, 'SKILL.md')
+    kind = 'bundle'
+  } else {
+    if (markdownFiles.length === 0) {
+      return fail('NO_SKILL_FILE', 'The folder contains no SKILL.md and no Markdown skill file.')
+    }
+    if (markdownFiles.length > 1 || entries.some(entry => !entry.name.startsWith('.') && !markdownFiles.includes(entry))) {
+      return fail('MULTIPLE_ENTRIES', 'A flat skill folder must contain exactly one Markdown file.')
+    }
+    skillFile = join(sourceDir, markdownFiles[0]?.name ?? '')
+    kind = 'flat'
+  }
+
+  let raw: string
+  try {
+    raw = await readBoundedFile(skillFile, maxBytes)
+  } catch (error) {
+    return fail(hasCode(error, 'TOO_LARGE') ? 'TOO_LARGE' : 'NOT_READABLE', safeError(error))
+  }
+  const parsed = parseDraft(raw, maxNameLength)
+  diagnostics.push(...parsed.diagnostics)
+  const name = parsed.draft.name
+  if (name === '' || NAME_PATTERN.test(name) === false || RESERVED_WINDOWS_NAMES.test(name)) {
+    diagnostics.push({ code: 'NAME_INVALID', message: `Skill name "${name}" is not a valid kebab-case identifier.` })
+  }
+  return { name, kind, skillFile, diagnostics }
+}
+
+/** Whether any filesystem entry (file or directory) exists at a path. */
+async function existsAny(path: string): Promise<boolean> {
+  try {
+    await lstat(path)
+    return true
+  } catch (error) {
+    if (hasCode(error, 'ENOENT')) return false
+    throw error
+  }
+}
+
+/** Copy one import folder into `targetPath` (a directory for bundles, a file for flat skills). */
+async function copyImportTree(
+  item: { kind: SkillLayout; sourceDir: string; skillFile: string },
+  targetPath: string,
+  maxBytesPerFile: number,
+): Promise<number> {
+  if (item.kind === 'flat') {
+    const raw = await readBoundedFile(item.skillFile, maxBytesPerFile)
+    await atomicWriteNew(targetPath, raw)
+    return Buffer.byteLength(raw, 'utf8')
+  }
+  await mkdir(targetPath)
+  const state = { bytes: 0 }
+  await copyTreeContents(item.sourceDir, targetPath, maxBytesPerFile, state)
+  return state.bytes
+}
+
+/** Recursively copy non-hidden entries, refusing symlinks and oversized files. */
+async function copyTreeContents(
+  sourceDir: string,
+  targetDir: string,
+  maxBytesPerFile: number,
+  state: { bytes: number },
+): Promise<void> {
+  const entries = await readdir(sourceDir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    if (entry.isSymbolicLink()) throw containmentError()
+    const sourcePath = join(sourceDir, entry.name)
+    const targetPath = join(targetDir, entry.name)
+    if (entry.isDirectory()) {
+      await mkdir(targetPath)
+      await copyTreeContents(sourcePath, targetPath, maxBytesPerFile, state)
+    } else if (entry.isFile()) {
+      const handle = await open(sourcePath, 'r')
+      try {
+        const info = await handle.stat()
+        if (info.size > maxBytesPerFile) {
+          throw new SkillAuthoringError('TOO_LARGE', `Resource file exceeds ${String(maxBytesPerFile)} bytes.`)
+        }
+        state.bytes += info.size
+        if (state.bytes > IMPORT_MAX_TOTAL_BYTES) {
+          throw new SkillAuthoringError('TOO_LARGE', 'Imported skill content is too large.')
+        }
+        const content = await handle.readFile()
+        const target = await open(targetPath, 'wx', 0o600)
+        try {
+          await target.writeFile(content)
+          await target.sync()
+        } finally {
+          await target.close()
+        }
+      } finally {
+        await handle.close()
+      }
+    }
+  }
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

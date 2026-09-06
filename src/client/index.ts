@@ -19,6 +19,8 @@ import {
   parseCandidateView,
   parseDiagnostics,
   parseDraft,
+  parseImportRequest,
+  parseImportResult,
   parsePolicyDocument,
   parseSnapshot,
   parseSnapshotRequest,
@@ -28,6 +30,8 @@ import {
   type PolicyScopeOption,
   type SkillCandidateView,
   type SkillDraftView,
+  type SkillImportRequest,
+  type SkillImportResult,
   type SkillManagerSnapshot,
   type SnapshotRequest,
   type TrashView,
@@ -166,6 +170,9 @@ export function skillManagerContribution(): WireContribution {
     invocation('restore', [param('trashId', text)], codec('DraftResult', parseDraftResult)),
     invocation('deletePermanently', [param('trashId', text)], codec('Ok', parseOk)),
     invocation('setLayer', [param('request', layerRequest)], codec('PolicyWrite', parsePolicyWrite)),
+    invocation('importFolders', [
+      param('request', codec<SkillImportRequest>('ImportRequest', value => parseImportRequest(value))),
+    ], codec<SkillImportResult>('ImportResult', value => parseImportResult(value))),
   ]
   return { package: PACKAGE, descriptors }
 }
@@ -210,6 +217,12 @@ interface SectionApi {
   restore(trashId: string): Promise<DraftResult>
   deletePermanently(trashId: string): Promise<'ok'>
   setLayer(request: unknown): Promise<PolicyWriteResult>
+  importFolders(request: SkillImportRequest): Promise<SkillImportResult>
+}
+
+/** Structural view of the Host's native directory picker namespace. */
+interface FolderPicker {
+  readonly pick?: () => Promise<string | null>
 }
 
 /**
@@ -273,12 +286,20 @@ export function apply(ctx: {
     restore: async trashId => parseDraftResult(await call('restore', [trashId])),
     deletePermanently: async trashId => parseOk(await call('deletePermanently', [trashId])),
     setLayer: async request => parsePolicyWrite(await call('setLayer', [request])),
+    importFolders: async request => parseImportResult(await call('importFolders', [request])),
+  }
+
+  /** Open the Host's native folder chooser; null means the operator cancelled. */
+  const pickFolder = async (): Promise<string | null> => {
+    const picker = (ctx as unknown as { get: (key: string) => unknown }).get('remote.directoryPicker') as FolderPicker | undefined
+    if (picker?.pick === undefined) throw new Error('This deployment has no native folder picker.')
+    return await picker.pick()
   }
 
   ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
       { name: 'settings.section', id: 'skills', order: 30, label: () => t('nav'), locale: NS },
-      (props: SkillManagerSectionProps) => h(Section, { ...props, t, api }),
+      (props: SkillManagerSectionProps) => h(Section, { ...props, t, api, pickFolder }),
     ))
 }
 
@@ -291,6 +312,7 @@ type LayerScope = 'global' | 'preset' | 'workspace' | 'session'
 function Section(props: {
   readonly t: (key: SkillManagerLocaleKey) => string
   readonly api: SectionApi
+  readonly pickFolder: () => Promise<string | null>
   readonly close?: () => void
 }): ReactNode {
   const { t, api } = props
@@ -312,6 +334,10 @@ function Section(props: {
   const [layerMode, setLayerMode] = useState<PolicyMode>('inherit')
   const [layerStates, setLayerStates] = useState<Record<string, PolicyState>>({})
   const [saving, setSaving] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [stagedPaths, setStagedPaths] = useState<string[]>([])
+  const [importRootId, setImportRootId] = useState('')
+  const [importResult, setImportResult] = useState<SkillImportResult | null>(null)
 
   const injectStyle = (): void => {
     if (typeof document === 'undefined') return
@@ -355,6 +381,41 @@ function Section(props: {
     } finally {
       setBusy(false)
     }
+  }
+
+  /** Open the folder-import staging panel with a default target root. */
+  const openImport = (): void => {
+    setImportOpen(true)
+    setImportResult(null)
+    if (importRootId === '' || !rootOptions.some(root => root.id === importRootId)) {
+      setImportRootId(writableRoots[0]?.id ?? '')
+    }
+  }
+
+  /** Ask the native picker for one folder and stage it. */
+  const stageFolder = async (): Promise<void> => {
+    await runAction(async () => {
+      const path = await props.pickFolder()
+      if (path === null) return
+      setStagedPaths(previous => previous.includes(path) ? previous : [...previous, path])
+      setImportResult(null)
+    }, null)
+  }
+
+  const dropStaged = (index: number): void => {
+    setStagedPaths(previous => previous.filter((_, i) => i !== index))
+    setImportResult(null)
+  }
+
+  /** Import every staged folder into the chosen root. */
+  const runImport = async (): Promise<void> => {
+    if (stagedPaths.length === 0 || importRootId === '') return
+    setImportResult(null)
+    await runAction(async () => {
+      const result = await api.importFolders({ paths: stagedPaths, rootId: importRootId })
+      setImportResult(result)
+      await reload(request)
+    }, t('noticeImported'))
   }
   useEffect(() => {
     void reload({})
@@ -756,6 +817,8 @@ function Section(props: {
           onChange: (event: { target: { value: string } }) => setSourceFilter(event.target.value) }, ...sourceOptions),
         h('select', { className: 'sm-select', value: statusFilter, 'aria-label': t('allStatuses'),
           onChange: (event: { target: { value: string } }) => setStatusFilter(event.target.value) }, ...statusOptions),
+        h('button', { type: 'button', className: 'sm-button', disabled: saving || writableRoots.length === 0,
+          onClick: openImport }, t('importFolders')),
         h('button', { type: 'button', className: 'sm-button sm-button-primary', disabled: saving || writableRoots.length === 0,
           onClick: openNew }, t('create')),
       ),
@@ -1023,6 +1086,46 @@ function Section(props: {
     ),
   )
 
+  /** Folder-import staging panel (only when import mode is open). */
+  const importDialog = !importOpen ? null : h('div', { className: 'sm-panel', key: 'import' },
+    h('h3', null, t('importTitle')),
+    h('p', { className: 'sm-rule' }, t('importIntro')),
+    h('div', { className: 'sm-layer-row' },
+      h('label', { className: 'sm-field' },
+        h('span', null, t('editorRoot')),
+        h('select', { className: 'sm-select', value: importRootId, disabled: saving,
+          onChange: (event: { target: { value: string } }) => {
+            setImportRootId(event.target.value)
+            setImportResult(null)
+          } },
+          ...writableRoots.map(root => h('option', { key: root.id, value: root.id }, root.label))),
+      ),
+    ),
+    stagedPaths.length === 0
+      ? h('p', { className: 'sm-empty' }, t('importEmpty'))
+      : h('div', null, ...stagedPaths.map((path, index) => {
+        const outcome = importResult?.items.find(item => item.index === index)
+        const badge = outcome === undefined ? null
+          : h('span', { className: importBadgeClass(outcome.status) }, t(importStatusKey(outcome.status)))
+        return h('div', { key: `${index}-${path}`, className: 'sm-layer-row' },
+          h('span', { className: 'sm-key', style: { flex: '1 1 240px' } }, folderBaseName(path)),
+          h('span', { className: 'sm-badge sm-badge-mute', style: { wordBreak: 'break-all' } }, path),
+          badge,
+          h('button', { type: 'button', className: 'sm-button', disabled: saving,
+            onClick: () => { dropStaged(index) } }, t('importRemove')),
+        )
+      })),
+    importResult !== null && h('p', { className: 'sm-rule' }, `${t('importSummary')}: ${String(importResult.imported)} / ${String(stagedPaths.length)}`),
+    h('div', { className: 'sm-dialog-actions' },
+      h('button', { type: 'button', className: 'sm-button', disabled: saving,
+        onClick: () => { void stageFolder() } }, t('importPick')),
+      h('button', { type: 'button', className: 'sm-button', disabled: saving,
+        onClick: () => { setImportOpen(false); setStagedPaths([]); setImportResult(null) } }, t('close')),
+      h('button', { type: 'button', className: 'sm-button sm-button-primary', disabled: saving || stagedPaths.length === 0 || importRootId === '',
+        onClick: () => { void runImport() } }, saving ? t('saving') : t('importConfirm')),
+    ),
+  )
+
   return h('div', { className: 'sm' },
     h('p', { className: 'sm-hint' }, t('intro')),
     h('div', { className: 'sm-toolbar' },
@@ -1033,8 +1136,30 @@ function Section(props: {
     notice !== null && h('p', { className: 'sm-status sm-status-ok', role: 'status' }, notice),
     error !== null && h('p', { className: 'sm-status sm-status-err', role: 'alert' }, error),
     copyDialog,
+    importDialog,
     body(),
   )
+}
+
+/** Status badge tone of one import outcome. */
+function importBadgeClass(status: SkillImportResult['items'][number]['status']): string {
+  if (status === 'imported') return 'sm-badge sm-badge-ok'
+  if (status === 'conflict') return 'sm-badge sm-badge-warn'
+  return 'sm-badge sm-badge-bad'
+}
+
+/** Locale key for one import outcome. */
+function importStatusKey(status: SkillImportResult['items'][number]['status']): SkillManagerLocaleKey {
+  if (status === 'imported') return 'importStatusImported'
+  if (status === 'conflict') return 'importStatusConflict'
+  if (status === 'invalid') return 'importStatusInvalid'
+  return 'importStatusError'
+}
+
+/** Last non-empty path segment of an absolute folder path. */
+function folderBaseName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? path
 }
 
 /** Translate a scope kind for option labels. */

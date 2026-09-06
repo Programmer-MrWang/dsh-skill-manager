@@ -138,3 +138,78 @@ describe('SkillAuthoringService', () => {
     })
   })
 })
+
+describe('SkillAuthoringService folder import', () => {
+  let sources: string
+  let home: string
+  let agents: string
+  let service: SkillAuthoringService
+
+  afterEach(async () => {
+    for (const root of [sources, home, agents]) {
+      if (root !== undefined) await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  const setup = async () => {
+    sources = await mkdtemp(join(tmpdir(), 'dsh-import-src-'))
+    home = await mkdtemp(join(tmpdir(), 'dsh-import-home-'))
+    agents = await mkdtemp(join(tmpdir(), 'dsh-import-agents-'))
+    service = new SkillAuthoringService({ dshHome: home, agentsHome: agents })
+    const roots = await service.listRoots()
+    const user = roots.find(root => root.kind === 'user-dsh')
+    if (user === undefined) throw new Error('user-dsh root missing')
+    return user.id
+  }
+
+  const writeSkill = async (dir: string, name: string, body = 'Do things.') => {
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: Does ${name}.\n---\n\n${body}`, 'utf8')
+  }
+
+  it('imports bundle and flat folders and reports per-item outcomes', async () => {
+    const user = await setup()
+    const bundleFolder = join(sources, 'alpha-source')
+    await writeSkill(bundleFolder, 'alpha')
+    await mkdir(join(bundleFolder, 'assets'))
+    await writeFile(join(bundleFolder, 'assets', 'hint.txt'), 'asset', 'utf8')
+    const flatFolder = join(sources, 'beta-source')
+    await mkdir(flatFolder)
+    await writeFile(join(flatFolder, 'beta.md'),
+      '---\nname: beta\ndescription: Does beta.\n---\n\nBeta body.', 'utf8')
+
+    const result = await service.importFromDirectories([bundleFolder, flatFolder], user)
+    expect(result.imported).toBe(2)
+    expect(result.items.map(item => [item.index, item.status])).toEqual([[0, 'imported'], [1, 'imported']])
+    const names = (await service.listCandidates()).map(candidate => candidate.name).sort()
+    expect(names).toEqual(['alpha', 'beta'])
+    expect((await service.listCandidates()).find(candidate => candidate.name === 'alpha')?.layout).toBe('bundle')
+    // Bundle resources travel along.
+    const assetPath = join(home, 'skills', 'alpha', 'assets', 'hint.txt')
+    await expect((await import('node:fs/promises')).readFile(assetPath, 'utf8')).resolves.toBe('asset')
+  })
+
+  it('reports invalid and conflicting folders without partial import', async () => {
+    const user = await setup()
+    // Target root already owns `taken`, so re-importing it conflicts.
+    await service.create(user, draft('taken'), 'bundle')
+    const existing = join(sources, 'taken-source')
+    await writeSkill(existing, 'taken')
+
+    const empty = join(sources, 'empty-folder')
+    await mkdir(empty)
+    const multi = join(sources, 'multi')
+    await mkdir(multi)
+    await writeFile(join(multi, 'one.md'), 'one', 'utf8')
+    await writeFile(join(multi, 'two.md'), 'two', 'utf8')
+
+    const result = await service.importFromDirectories([existing], user)
+    expect(result.items[0]?.status).toBe('conflict')
+    expect((await service.listCandidates()).map(candidate => candidate.name)).toEqual(['taken'])
+
+    const mixed = await service.importFromDirectories([empty, multi, join(sources, 'missing')], user)
+    expect(mixed.items.map(item => item.status)).toEqual(['invalid', 'invalid', 'invalid'])
+    expect((await service.listCandidates()).map(candidate => candidate.name)).toEqual(['taken'])
+  })
+})

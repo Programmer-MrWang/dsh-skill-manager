@@ -146,7 +146,10 @@ The page has four views:
 1. **Installed** — effective and shadowed candidates, trust, source, diagnostics.
 2. **Policies** — global/preset/workspace/session inheritance and effective preview.
 3. **Editor** — structured frontmatter plus Markdown body and diff/conflict flow.
-4. **Import & trash** — paste/file/directory import, recoverable deletion.
+4. **Import & trash** — multi-folder import (native folder picker stages several
+   folders, each holding one skill; one `importFolders` call preflights every
+   folder, reports per-folder outcomes, and is all-or-nothing), plus
+   recoverable deletion.
 
 State follows a controller + immutable snapshot store pattern. Mutations are pessimistic: authority is reloaded from the Host after success, while drafts survive errors.
 

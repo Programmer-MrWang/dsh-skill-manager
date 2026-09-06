@@ -31,6 +31,9 @@ export type SkillManagerLocaleKey =
   | 'policyContext' | 'policyContextNone' | 'policyEmptyLayer' | 'policyEffectivePreview'
   | 'previewModel' | 'previewUser'
   | 'trashIntro' | 'deletedAt'
+  | 'importFolders' | 'importTitle' | 'importIntro' | 'importEmpty' | 'importPick'
+  | 'importRemove' | 'importConfirm' | 'importSummary' | 'noticeImported'
+  | 'importStatusImported' | 'importStatusConflict' | 'importStatusInvalid' | 'importStatusError'
 
 /** English dictionary. */
 export const en: Record<SkillManagerLocaleKey, string> = {
@@ -157,6 +160,19 @@ export const en: Record<SkillManagerLocaleKey, string> = {
   previewUser: 'User',
   trashIntro: 'Restore recoverable skills or permanently remove them.',
   deletedAt: 'Deleted',
+  importFolders: 'Import folders',
+  importTitle: 'Import skills from folders',
+  importIntro: 'Each picked folder must contain one skill: a folder with SKILL.md, or a folder with exactly one Markdown skill file. Add several folders, remove any you do not want, then import them all at once; folders are stored under the name in their SKILL.md.',
+  importEmpty: 'No folders selected yet.',
+  importPick: 'Choose folder',
+  importRemove: 'Remove',
+  importConfirm: 'Import',
+  importSummary: 'Import result',
+  noticeImported: 'Folder import finished.',
+  importStatusImported: 'Imported',
+  importStatusConflict: 'Name conflict',
+  importStatusInvalid: 'Invalid',
+  importStatusError: 'Failed',
 }
 
 /** Simplified Chinese dictionary. */
@@ -284,4 +300,17 @@ export const zh: Record<SkillManagerLocaleKey, string> = {
   previewUser: '用户',
   trashIntro: '恢复可找回的 Skill，或将其永久移除。',
   deletedAt: '删除时间',
+  importFolders: '导入文件夹',
+  importTitle: '从文件夹导入 Skill',
+  importIntro: '每个被选中的文件夹须包含一个 Skill（含 SKILL.md 的文件夹，或仅含单个 Markdown 文件的文件夹）。可多次选择、逐个移除，确认后一次性导入；文件夹按 SKILL.md 中的 name 命名。',
+  importEmpty: '尚未选择文件夹。',
+  importPick: '选择文件夹',
+  importRemove: '移除',
+  importConfirm: '确认导入',
+  importSummary: '导入结果',
+  noticeImported: '文件夹导入完成。',
+  importStatusImported: '已导入',
+  importStatusConflict: '名称冲突',
+  importStatusInvalid: '无效',
+  importStatusError: '失败',
 }

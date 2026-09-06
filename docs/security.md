@@ -23,6 +23,24 @@ The UI displays source and trust on every candidate and never equates “install
 8. Delete means move to manager-owned trash; permanent removal is a separate confirmed action.
 9. Shipped preset and package-install directories are immutable from this plugin.
 
+## Folder import
+
+Operator-picked source folders are the one deliberate exception to "the
+Client never submits an arbitrary absolute path": the path is produced by the
+Host's native directory chooser (a user gesture), never typed or forged by the
+page. Import is read-only over the source and executes as one all-or-nothing
+Host operation:
+
+- every folder is preflighted first (real directory, not a symlink; contains a
+  `SKILL.md` bundle or exactly one flat Markdown skill file; frontmatter name
+  valid and non-conflicting);
+- only regular files are copied — symlinks/junctions are refused, dot entries
+  are skipped, per-file and total size caps apply;
+- destination names come from validated skill frontmatter inside the managed
+  root; any copy failure rolls the whole batch back;
+- the wire carries per-folder indices, statuses, and names — never the source
+  paths (the page keeps them locally for staging only).
+
 ## Wire rules
 
 Remote responses contain detached JSON only. They never contain:

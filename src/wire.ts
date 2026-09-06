@@ -138,6 +138,26 @@ export interface SkillValidateResult {
   readonly diagnostics: readonly SkillDiagnosticView[]
 }
 
+/** One folder of an import request: absolute source path plus destination root. */
+export interface SkillImportRequest {
+  readonly paths: readonly string[]
+  readonly rootId: string
+}
+
+/** Per-folder import outcome. */
+export interface SkillImportItemView {
+  readonly index: number
+  readonly name?: string
+  readonly status: 'imported' | 'conflict' | 'invalid' | 'error'
+  readonly diagnostics?: readonly SkillDiagnosticView[]
+}
+
+/** Complete folder-import result. */
+export interface SkillImportResult {
+  readonly items: readonly SkillImportItemView[]
+  readonly imported: number
+}
+
 /** Stable failure codes mapped onto RemoteError details. */
 export type SkillManagerErrorCode =
   | 'INVALID_INPUT'
@@ -160,6 +180,7 @@ export const METHODS = [
   'restore',
   'deletePermanently',
   'setLayer',
+  'importFolders',
 ] as const
 export type SkillManagerMethod = (typeof METHODS)[number]
 
@@ -486,6 +507,38 @@ export function parsePolicyContext(value: unknown): PolicyContext {
     ...(v.preset === undefined ? {} : { preset: parseString(v.preset, 'policy context.preset') }),
     ...(v.workspace === undefined ? {} : { workspace: parseString(v.workspace, 'policy context.workspace') }),
     ...(v.session === undefined ? {} : { session: parseString(v.session, 'policy context.session') }),
+  }
+}
+
+/** Parse an import request. */
+export function parseImportRequest(value: unknown): SkillImportRequest {
+  const v = parseKnown(value, 'import request', ['paths', 'rootId'])
+  const paths = parseArray(v.paths, 'import request.paths').map((entry, index) =>
+    parseString(entry, `import request.paths[${index}]`))
+  if (paths.length === 0) fail('import request.paths must not be empty')
+  return { paths, rootId: parseString(v.rootId, 'import request.rootId') }
+}
+
+/** Parse an import result. */
+export function parseImportResult(value: unknown): SkillImportResult {
+  const v = parseKnown(value, 'import result', ['items', 'imported'])
+  const items = parseArray(v.items, 'import result.items').map((entry, index) => {
+    const item = parseKnown(entry, `import result.items[${index}]`, ['index', 'name', 'status', 'diagnostics'])
+    const rawStatus = parseString(item.status, `import result.items[${index}].status`)
+    if (rawStatus !== 'imported' && rawStatus !== 'conflict' && rawStatus !== 'invalid' && rawStatus !== 'error') {
+      fail(`import result.items[${index}].status is invalid`)
+    }
+    const status = rawStatus as SkillImportItemView['status']
+    return {
+      index: parseNumber(item.index, `import result.items[${index}].index`),
+      ...(item.name === undefined ? {} : { name: parseString(item.name, `import result.items[${index}].name`) }),
+      status,
+      ...(item.diagnostics === undefined ? {} : { diagnostics: parseDiagnostics(item.diagnostics) }),
+    }
+  })
+  return {
+    items,
+    imported: parseNumber(v.imported, 'import result.imported'),
   }
 }
 

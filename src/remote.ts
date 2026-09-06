@@ -28,6 +28,7 @@ import {
   METHODS,
   PACKAGE,
   parseDraft,
+  parseImportRequest,
   parseSnapshotRequest,
   param,
   SERVICE,
@@ -69,6 +70,8 @@ const OK = codec('Ok', (value: unknown) => {
 })
 const SET_LAYER_REQUEST = codec('SetLayerRequest', (value: unknown) => parseLayerRequest(value))
 const POLICY_WRITE = codec('PolicyWrite', (value: unknown) => value)
+const IMPORT_REQUEST = codec('ImportRequest', (value: unknown) => parseImportRequest(value))
+const IMPORT_RESULT = codec('ImportResult', (value: unknown) => value)
 
 /** Wire descriptors for the whole `skillManager` namespace. */
 export function skillManagerDescriptors(): readonly WireDescriptor[] {
@@ -83,6 +86,7 @@ export function skillManagerDescriptors(): readonly WireDescriptor[] {
     invocation('restore', [param('trashId', STRING)], DRAFT_RESULT),
     invocation('deletePermanently', [param('trashId', STRING)], OK),
     invocation('setLayer', [param('request', SET_LAYER_REQUEST)], POLICY_WRITE),
+    invocation('importFolders', [param('request', IMPORT_REQUEST)], IMPORT_RESULT),
   ]
 }
 
@@ -231,6 +235,20 @@ export class SkillManagerController {
       parsed.expectedRevision,
     )
     return { revision: result.revision, document: result.document }
+  }
+
+  async importFolders(request: unknown): Promise<unknown> {
+    const parsed = parseImportRequest(request)
+    const result = await this.authoring.importFromDirectories(parsed.paths, parsed.rootId)
+    return {
+      items: result.items.map(item => ({
+        index: item.index,
+        ...(item.name === undefined ? {} : { name: item.name }),
+        status: item.status,
+        ...(item.diagnostics === undefined ? {} : { diagnostics: item.diagnostics }),
+      })),
+      imported: result.imported,
+    }
   }
 
   /* ------------------------- internal resolution ------------------------ */
@@ -398,6 +416,9 @@ export class SkillManagerGateway extends TypertRemoteService {
   }
   setLayer(request: unknown): Promise<unknown> {
     return this.invoke('setLayer', () => this.controller.setLayer(request))
+  }
+  importFolders(request: unknown): Promise<unknown> {
+    return this.invoke('importFolders', () => this.controller.importFolders(request))
   }
 
   /** Run one method and fold every domain failure onto the stable Remote code. */
